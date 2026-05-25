@@ -21,14 +21,14 @@ I work with SQL, Excel, R, and Python to clean, analyze, and visualize data.
 
 ## Projects
 
-This portfolio will include data analytics projects in the following areas:
+### Healthcare Data Analysis Project
 
-- Healthcare data analysis
-- Business and marketing analytics
-- Excel dashboards
-- SQL analysis
-- R-based data analysis
-- Python data analysis
+A healthcare data analysis project completed with R, R Markdown, and Shiny.  
+
+The project includes descriptive analysis, anomaly detection, and patient-level risk signal analysis.
+
+Project folder: `r-healthcare-analysis-project`
+
 
 ## Tools
 
