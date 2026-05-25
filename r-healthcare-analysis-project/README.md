@@ -31,9 +31,13 @@ The dataset includes patient information, clinical observations, and encounter r
 
 ## Project Files
 
-- R Markdown report
-- Shiny application
-- Presentation slides
+## Project Files
+
+- `DA Yekun Layihe AliO 20260515 (1).Rmd` — R Markdown report file
+
+- `DA Yekun Layihe AliO 20260515.R` — Shiny / R application file
+
+- `DA Yekun Layihe AliO 20260515.pptx` — final project presentation
 
 ## Note
 
