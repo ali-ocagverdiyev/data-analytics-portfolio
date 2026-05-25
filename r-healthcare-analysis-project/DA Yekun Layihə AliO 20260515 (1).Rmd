@@ -1,0 +1,1765 @@
+---
+title: "DA Yekun Layihə AliO 20260515.Rmd"
+author: "Ali.O"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+
+
+
+##PAKETLER
+```{r paketler, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+library(dplyr)
+library(data.table)
+library(ggplot2)
+library(plotly)
+library(lubridate)
+library(reshape2)
+library(RMariaDB)
+library(mailR)
+library(readr)
+library(xlsx)
+library(stringr)
+library(DT)
+library(tidyr)
+
+```
+
+
+
+
+
+
+
+## DATALAR
+```{r datalar, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+pasientler=read_rds("~/Downloads/patients.rds")
+muracietler=read_rds("~/Downloads/encounters (1).rds")
+musahideler=read_rds("~/Downloads/observations (1).rds")
+
+names(pasientler)
+names(muracietler)
+names(musahideler)
+
+
+```
+
+
+
+
+
+
+
+```{r datalarin_birlesdirilmesi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+pasientler_join = pasientler %>%
+mutate(
+yas = as.numeric(floor(interval(BIRTHDATE, as.Date("2017-05-24")) / years(1))),
+yas_qrupu = case_when(
+yas < 18 ~ "0-17",
+yas >= 18 & yas < 35 ~ "18-34",
+yas >= 35 & yas < 50 ~ "35-49",
+yas >= 50 & yas < 65 ~ "50-64",
+yas >= 65 ~ "65+",
+TRUE ~ "Bilinmir"
+)) %>%
+select(ID,BIRTHDATE,DEATHDATE,GENDER,MARITAL,RACE,ETHNICITY,BIRTHPLACE,yas,yas_qrupu)
+
+
+muracietler_join = muracietler %>%select(ID,muraciet_tarixi = DATE,muraciet_kodu = CODE,muraciet_novu = DESCRIPTION,
+sebeb_kodu = REASONCODE,sebeb_aciqlamasi = REASONDESCRIPTION)
+
+umumi_data = musahideler %>%left_join(
+muracietler_join,by = c("ENCOUNTER" = "ID")) %>%
+left_join(pasientler_join,by = c("PATIENT" = "ID"))
+
+
+
+
+nrow(musahideler) == nrow(umumi_data)
+names(umumi_data)
+head(umumi_data)
+
+```
+
+
+
+
+
+
+
+## 1. Deskriptiv təhlil
+Bu bölmədə layihədə istifadə olunan xammal datalar, cədvəllərin ümumi ölçüləri, cədvəllərarası əlaqə, əsas klinik göstəricilər üzrə statistik xülasə və mərkəzi tendensiya ölçüləri təqdim olunur. Layihədə üç əsas data istifadə edilmişdir: `pasientler`, `muracietler` və `musahideler`. Əsas analiz datası kimi `musahideler` seçilmişdir, çünki klinik ölçmələr və nəticələr bu cədvəldə yerləşir. `pasientler` datası pasiyentlərin demoqrafik məlumatlarını, `muracietler` datası isə tibbi müraciət məlumatlarını təmin edir.
+
+
+
+
+
+
+
+### 1.1. Birləşdirilmiş data üzrə ümumi baxış
+```{r merkezi_tendensiya, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+umumi_data = umumi_data %>%
+mutate(VALUE_NUM = as.numeric(VALUE))
+
+
+summary(umumi_data)
+```
+
+Birləşdirilmiş data üzrə ümumi baxışda musahideler əsas cədvəl kimi götürülmüş, müraciət və pasiyent məlumatları bu cədvələ əlavə edilmişdir. Birləşdirmədən sonra nrow(musahideler) == nrow(umumi_data)  nəticəsi TRUE olmuşdur. Bu, müşahidə sətrlərinin birləşdirmə zamanı itmədiyini göstərir. VALUE dəyişəni rəqəmsal analiz üçün VALUE_NUM formasına çevrilmişdir. Bu hissə birləşdirilmiş datanın ümumi strukturunu, dəyişənlərin tipini və əsas statistik göstəricilərini ilkin olaraq görmək üçün istifadə olunmuşdur.
+
+
+
+
+
+
+
+### 1.2. Cins üzrə pasiyent paylanması
+```{r cins_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+cins_paylanmasi = pasientler %>%
+filter(!is.na(GENDER)) %>%
+count(GENDER, name = "pasiyent_sayi") %>%
+mutate(
+faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1)
+) %>%
+arrange(desc(pasiyent_sayi))
+cins_paylanmasi
+
+
+
+
+
+ggplot(cins_paylanmasi,
+aes(x = GENDER, y = pasiyent_sayi, fill = GENDER)) +
+geom_col() +geom_text(
+aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),
+vjust = -0.3,
+size = 4) +
+scale_fill_manual(
+values = c("F" = "pink","M" = "blue")) +
+scale_y_continuous(
+limits = c(0, max(cins_paylanmasi$pasiyent_sayi) * 1.15)) +labs(
+title = "Cins üzrə pasiyent paylanması",
+x = "Cins",
+y = "Pasiyent sayı",
+fill = "Cins") +theme_minimal()
+
+```
+
+Cins üzrə pasiyent paylanmasına baxdıqda datada kişi və qadın pasiyent saylarının bir-birinə çox yaxın olduğu görünür. Kişi pasiyentlər 66,524 nəfərdir və ümumi pasiyentlərin 50.2%-ni təşkil edir. Qadın pasiyentlər isə 66,083 nəfərdir və ümumi pasiyentlərin 49.8%-ni təşkil edir. Bu nəticə datasetdə pasiyentlərin cins üzrə demək olar ki, balanslı paylandığını göstərir.
+
+
+
+
+
+
+
+### 1.3. Yaş qrupları üzrə pasiyent paylanması
+```{r yas_qruplari_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+pasientler = pasientler %>%
+mutate(yas = as.numeric(floor(interval(BIRTHDATE, as.Date("2017-05-24")) / years(1))),
+yas_qrupu = case_when(
+yas < 18 ~ "0-17",
+yas >= 18 & yas < 35 ~ "18-34",
+yas >= 35 & yas < 50 ~ "35-49",
+yas >= 50 & yas < 65 ~ "50-64",
+yas >= 65 ~ "65+",
+TRUE ~ "Bilinmir"),
+yas_qrupu = factor(
+yas_qrupu,
+levels = c("0-17", "18-34", "35-49", "50-64", "65+")))
+
+yas_qrupu_paylanmasi = pasientler %>%
+count(yas_qrupu, name = "pasiyent_sayi") %>%
+mutate(faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1)) %>%
+arrange(yas_qrupu)
+yas_qrupu_paylanmasi
+
+
+
+
+
+ggplot(yas_qrupu_paylanmasi,
+aes(x = yas_qrupu, y = pasiyent_sayi, fill = yas_qrupu)) +
+geom_col() +
+geom_text(
+aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),
+vjust = -0.3,size = 4) +
+scale_y_continuous(
+limits = c(0, max(yas_qrupu_paylanmasi$pasiyent_sayi) * 1.15)) +
+labs(title = "Yaş qrupları üzrə pasiyent paylanması",
+x = "Yaş qrupu",
+y = "Pasiyent sayı") +
+theme_minimal() +theme(
+legend.position = "none")
+
+```
+
+Yaş qrupları üzrə pasiyent paylanmasına baxdıqda ən böyük qrupun 65+ yaş qrupu olduğu görünür. Bu qrupda 39,582 pasiyent var və ümumi pasiyentlərin 29.8%-ni təşkil edir. Ən az pasiyent isə 35-49 yaş qrupundadır: 20,066 nəfər və 15.1%. Bu nəticə datasetdə 65+ yaş qrupunun digər yaş qrupları ilə müqayisədə daha çox təmsil olunduğunu göstərir.
+
+
+
+
+
+
+
+### 1.4. Əsas klinik göstəricilər üzrə statistik baxış
+```{r esas_klinik_gostericiler_statistik_baxis, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+umumi_data = umumi_data %>%
+mutate(VALUE_NUM = as.numeric(VALUE))
+
+esas_gostericiler = c(
+"Body Mass Index",
+"Systolic Blood Pressure",
+"Diastolic Blood Pressure",
+"Glucose",
+"Hemoglobin A1c/Hemoglobin.total in Blood",
+"Total Cholesterol",
+"Triglycerides")
+
+klinik_gosterici_xulase = umumi_data %>%
+filter(DESCRIPTION %in% esas_gostericiler) %>%
+filter(!is.na(VALUE_NUM)) %>%
+group_by(DESCRIPTION, UNITS) %>%
+summarise(
+olcme_sayi = n(),
+minimum_deyer = round(min(VALUE_NUM, na.rm = TRUE), 2),
+orta_deyer = round(mean(VALUE_NUM, na.rm = TRUE), 2),
+median_deyer = round(median(VALUE_NUM, na.rm = TRUE), 2),
+maksimum_deyer = round(max(VALUE_NUM, na.rm = TRUE), 2),
+.groups = "drop") %>%
+arrange(desc(olcme_sayi))
+
+klinik_gosterici_xulase
+
+
+ggplot(klinik_gosterici_xulase,
+aes(x = reorder(DESCRIPTION, olcme_sayi),
+y = olcme_sayi,
+fill = DESCRIPTION)) +
+geom_col() +
+geom_text(
+aes(label = olcme_sayi),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(klinik_gosterici_xulase$olcme_sayi) * 1.15)) +
+labs(
+title = "Əsas klinik göstəricilər üzrə ölçmə sayı",
+x = "Klinik göstərici",
+y = "Ölçmə sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+```
+
+Əsas klinik göstəricilər üzrə baxışda seçilmiş klinik göstəricilərin ölçmə sayı, minimum, orta, median və maksimum dəyərləri təqdim olunmuşdur. Ölçmə sayına görə ən çox qeydə alınan göstəricilər sistolik və diastolik qan təzyiqidir. Hər iki göstərici üzrə 588,656 ölçmə mövcuddur. BMI göstəricisi də yüksək ölçmə sayına malikdir və 518,213 dəfə qeydə alınmışdır. Bu nəticə qan təzyiqi və BMI ölçmələrinin datada daha geniş təmsil olunduğunu göstərir. Fərqli göstəricilər fərqli ölçü vahidlərinə malik olduğu üçün bu hissədə əsas məqsəd göstəricilərin birbaşa müqayisəsi yox, onların ümumi statistik strukturunun göstərilməsidir.
+
+
+
+
+
+
+
+### 1.5. Yaş qruplarına görə BMI və qan təzyiqi
+```{r yas_qruplari_bmi_tezyiq, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+yas_bmi_tezyiq = umumi_data %>%
+filter(DESCRIPTION %in% c("Body Mass Index", "Systolic Blood Pressure")) %>%
+filter(!is.na(VALUE_NUM)) %>%
+filter(!is.na(yas_qrupu)) %>%
+mutate(yas_qrupu = factor(yas_qrupu,
+levels = c("0-17", "18-34", "35-49", "50-64", "65+"))) %>%
+group_by(yas_qrupu, DESCRIPTION, UNITS) %>%
+summarise(olcme_sayi = n(),
+orta_deyer = round(mean(VALUE_NUM, na.rm = TRUE), 1),
+median_deyer = round(median(VALUE_NUM, na.rm = TRUE), 1),
+minimum_deyer = round(min(VALUE_NUM, na.rm = TRUE), 1),
+maksimum_deyer = round(max(VALUE_NUM, na.rm = TRUE), 1),
+.groups = "drop") %>%
+arrange(yas_qrupu, DESCRIPTION)
+
+yas_bmi_tezyiq
+
+
+
+yas_bmi_tezyiq_qrafik = yas_bmi_tezyiq %>%
+mutate(
+gosterici_adi = case_when(
+DESCRIPTION == "Body Mass Index" ~ "Bədən kütlə indeksi",
+DESCRIPTION == "Systolic Blood Pressure" ~ "Sistolik qan təzyiqi",
+TRUE ~ DESCRIPTION))
+
+ggplot(yas_bmi_tezyiq_qrafik,
+aes(x = yas_qrupu, y = orta_deyer, fill = yas_qrupu)) +
+geom_col() +geom_text(
+aes(label = orta_deyer),vjust = -0.3,size = 3.5
+) +facet_wrap(~ gosterici_adi, scales = "free_y") +
+scale_y_continuous(
+limits = c(0, NA)) +labs(
+title = "Yaş qrupları üzrə BMI və sistolik qan təzyiqi",
+x = "Yaş qrupu",
+y = "Orta dəyər") +
+theme_minimal() +
+theme(legend.position = "none",
+axis.text.x = element_text(angle = 30, hjust = 1))
+
+```
+
+Yaş qrupları üzrə BMI və sistolik qan təzyiqi göstəricilərinə baxdıqda hər iki göstəricinin yaş qrupları üzrə fərqli dəyişdiyi görünür. BMI üzrə ən yüksək orta dəyər 50-64 yaş qrupunda qeydə alınmışdır və 38.3 olmuşdur. 65+ yaş qrupunda BMI orta dəyəri 32.5 olsa da, bu göstərici yenə də gənc yaş qruplarından yüksəkdir. Sistolik qan təzyiqi isə 35 yaşdan sonra daha yüksək səviyyədə qalır və 50-64 yaş qrupunda 136.2 ilə ən yüksək orta dəyərə çatır. Bu analiz yaş qrupları üzrə BMI və sistolik qan təzyiqinin orta dəyərlərində fərqlər olduğunu göstərir, lakin nəticə diaqnostik qərar kimi deyil, deskriptiv klinik müşahidə kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+### 1.6. Müraciət növünə görə paylanma
+```{r muraciet_novune_gore_paylanma, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+muraciet_novu_paylanma = muracietler %>%
+filter(!is.na(DESCRIPTION)) %>%
+count(DESCRIPTION, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1)) %>%
+arrange(desc(muraciet_sayi))
+head(muraciet_novu_paylanma, 10)
+muraciet_novu_top10 = muraciet_novu_paylanma %>%
+head(10)
+
+
+
+ggplot(muraciet_novu_top10,
+aes(x = reorder(DESCRIPTION, muraciet_sayi),
+y = muraciet_sayi,
+fill = DESCRIPTION)) +
+geom_col() +
+geom_text(
+aes(label = paste0(muraciet_sayi, " (", faiz, "%)")),
+hjust = -0.1,
+size = 3) +
+coord_flip() +scale_y_continuous(
+limits = c(0, max(muraciet_novu_top10$muraciet_sayi) * 1.15)) +
+labs(
+title = "Ən çox görülən müraciət növləri",
+x = "Müraciət növü",
+y = "Müraciət sayı") +theme_minimal() +theme(
+legend.position = "none")
+
+
+
+
+```
+
+Müraciət növünə görə paylanmaya baxdıqda ən çox qeydə alınan müraciət növünün Outpatient Encounter olduğu görünür. Bu müraciət növü 597,116 dəfə qeydə alınmışdır və ümumi müraciətlərin 47.3%-ni təşkil edir. İkinci yerdə Encounter for symptom gəlir və 199,518 müraciətlə 15.8% paya malikdir. Qrafikdə ən çox rast gəlinən ilk 10 müraciət növü göstərilmişdir. Bu nəticə datasetdə müraciətlərin böyük hissəsinin ambulator və simptom əsaslı müraciətlərdən ibarət olduğunu göstərir.
+
+
+
+
+
+
+
+### 1.7. Müraciət növünə görə klinik ölçmələr
+```{r muraciet_novu_klinik_olcmeler, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+esas_gostericiler = c(
+"Body Mass Index",
+"Systolic Blood Pressure",
+"Diastolic Blood Pressure",
+"Glucose",
+"Hemoglobin A1c/Hemoglobin.total in Blood",
+"Total Cholesterol",
+"Triglycerides")
+
+muraciet_klinik_olcmeler = umumi_data %>%
+filter(DESCRIPTION %in% esas_gostericiler) %>%
+filter(!is.na(muraciet_novu)) %>%
+count(muraciet_novu, DESCRIPTION, name = "olcme_sayi") %>%
+group_by(muraciet_novu) %>%
+mutate(toplam_olcme = sum(olcme_sayi),
+faiz = round(olcme_sayi / toplam_olcme * 100, 1)) %>%
+ungroup() %>%
+arrange(desc(toplam_olcme), muraciet_novu, desc(olcme_sayi))
+head(muraciet_klinik_olcmeler, 20)
+
+muraciet_toplam_olcme = muraciet_klinik_olcmeler %>%
+group_by(muraciet_novu) %>%
+summarise(
+toplam_olcme = max(toplam_olcme),
+.groups = "drop") %>%
+arrange(desc(toplam_olcme)) %>%
+head(10)
+
+
+ggplot(muraciet_toplam_olcme,
+aes(x = reorder(muraciet_novu, toplam_olcme),
+y = toplam_olcme,
+fill = muraciet_novu)) +
+geom_col() +
+geom_text(aes(label = toplam_olcme),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(muraciet_toplam_olcme$toplam_olcme) * 1.15)) +
+labs(title = "Müraciət növləri üzrə ümumi klinik ölçmə sayı",
+x = "Müraciət növü",
+y = "Ümumi klinik ölçmə sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+
+
+```
+
+Müraciət növünə görə klinik ölçmələrə baxdıqda əsas klinik göstəricilərin böyük hissəsinin Outpatient Encounter daxilində qeydə alındığı görünür. Bu müraciət növündə ümumilikdə 2,397,334 klinik ölçmə aparılmışdır. Digər müraciət növlərində ölçmə sayı xeyli aşağıdır. Bu nəticə Outpatient Encounter pasiyentlərinin daha riskli olduğunu göstərmir; sadəcə seçilmiş klinik ölçmələrin əsasən ambulator müraciətlər zamanı toplandığını göstərir.
+
+
+
+
+
+
+
+### 1.8. İzlənmə qrupları üzrə pasiyent paylanması
+```{r izlenme_qruplari_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+pasiyent_observation_sayi = musahideler %>%
+count(PATIENT, name = "observation_sayi") %>%
+arrange(desc(observation_sayi))
+pasiyent_observation_qrup = pasiyent_observation_sayi %>%mutate(
+izlenme_qrupu = case_when(
+observation_sayi <= 20 ~ "Az izlənən",
+observation_sayi > 20 & observation_sayi <= 55 ~ "Orta izlənən",
+observation_sayi > 55 ~ "Çox izlənən",
+TRUE ~ "Bilinmir"),
+izlenme_qrupu = factor(
+izlenme_qrupu,
+levels = c("Az izlənən", "Orta izlənən", "Çox izlənən"))
+) %>%count(izlenme_qrupu, name = "pasiyent_sayi") %>%
+mutate(faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1))
+
+pasiyent_observation_qrup
+
+
+ggplot(pasiyent_observation_qrup,
+aes(x = izlenme_qrupu, y = pasiyent_sayi, fill = izlenme_qrupu)) +
+geom_col() +geom_text(aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),vjust = -0.3,
+size = 4) +scale_y_continuous(
+limits = c(0, max(pasiyent_observation_qrup$pasiyent_sayi) * 1.15)) +
+labs(title = "İzlənmə qrupları üzrə pasiyent paylanması",
+ x = "İzlənmə qrupu",
+y = "Pasiyent sayı") +theme_minimal() +
+theme(legend.position = "none")
+
+```
+
+İzlənmə qrupları üzrə pasiyent paylanmasına baxdıqda ən böyük qrupun orta izlənən pasiyentlər olduğu görünür. Bu qrupda 58,179 pasiyent var və ümumi pasiyentlərin 49.2%-ni təşkil edir. Az izlənən pasiyentlər 30,761 nəfərdir və 26.0% paya malikdir. Çox izlənən pasiyentlər isə 29,385 nəfərdir və 24.8% təşkil edir. Bu nəticə datada pasiyentlərin eyni səviyyədə izlənilmədiyini və müşahidə sayına görə fərqli qruplara bölündüyünü göstərir.
+
+
+
+
+
+
+
+### 1.9. BMI qrupuna görə orta sistolik təzyiq
+```{r bmi_qrupuna_gore_sistolik_tezyiq, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+bmi_sistolik_data = umumi_data %>%
+filter(DESCRIPTION %in% c("Body Mass Index", "Systolic Blood Pressure")) %>%
+filter(!is.na(VALUE_NUM)) %>%
+select(PATIENT, DESCRIPTION, VALUE_NUM) %>%group_by(PATIENT, DESCRIPTION) %>%
+summarise(orta_deyer = mean(VALUE_NUM, na.rm = TRUE),.groups = "drop")
+bmi_sistolik_data = dcast(
+bmi_sistolik_data,
+PATIENT ~ DESCRIPTION,
+value.var = "orta_deyer")
+bmi_sistolik_data = bmi_sistolik_data %>%
+filter(!is.na(`Body Mass Index`)) %>%
+filter(!is.na(`Systolic Blood Pressure`)) %>%
+mutate(bmi_qrupu = case_when(
+`Body Mass Index` < 18.5 ~ "Aşağı BMI",
+`Body Mass Index` >= 18.5 & `Body Mass Index` < 25 ~ "Normal BMI",
+`Body Mass Index` >= 25 & `Body Mass Index` < 30 ~ "Artıq çəki",
+`Body Mass Index` >= 30 & `Body Mass Index` < 40 ~ "Piylənmə",
+`Body Mass Index` >= 40 ~ "Yüksək piylənmə",
+TRUE ~ "Bilinmir"),
+bmi_qrupu = factor(bmi_qrupu,
+levels = c("Aşağı BMI", "Normal BMI", "Artıq çəki", "Piylənmə", "Yüksək piylənmə")))
+bmi_qrup_sistolik = bmi_sistolik_data %>%
+group_by(bmi_qrupu) %>%
+summarise(
+pasiyent_sayi = n(),
+orta_sistolik_tezyiq = round(mean(`Systolic Blood Pressure`, na.rm = TRUE), 1),
+median_sistolik_tezyiq = round(median(`Systolic Blood Pressure`, na.rm = TRUE), 1),
+minimum_sistolik_tezyiq = round(min(`Systolic Blood Pressure`, na.rm = TRUE), 1),
+maksimum_sistolik_tezyiq = round(max(`Systolic Blood Pressure`, na.rm = TRUE), 1),
+.groups = "drop")
+
+bmi_qrup_sistolik
+
+
+
+ggplot(bmi_qrup_sistolik,
+aes(x = bmi_qrupu, y = orta_sistolik_tezyiq, fill = bmi_qrupu)) +
+geom_col() +
+geom_text(
+aes(label = orta_sistolik_tezyiq),
+vjust = -0.3,
+size = 4) +
+scale_y_continuous(
+limits = c(0, max(bmi_qrup_sistolik$orta_sistolik_tezyiq) * 1.15)) +
+labs(title = "BMI qrupuna görə orta sistolik qan təzyiqi",
+x = "BMI qrupu",
+y = "Orta sistolik təzyiq") +theme_minimal() +
+theme(legend.position = "none",
+axis.text.x = element_text(angle = 25, hjust = 1))
+
+
+```
+
+BMI qrupuna görə orta sistolik qan təzyiqinə baxdıqda BMI səviyyəsi artdıqca orta sistolik təzyiqin də yüksəldiyi görünür. Aşağı BMI qrupunda orta sistolik təzyiq 120.5 olduğu halda, normal BMI qrupunda bu göstərici 128.5, artıq çəki qrupunda isə 133.8 olmuşdur. Piylənmə və yüksək piylənmə qruplarında orta sistolik təzyiq 135-dən yuxarıdır. Bu analiz BMI qrupları üzrə sistolik qan təzyiqinin orta dəyərlərində fərq olduğunu göstərir və nəticə deskriptiv klinik müşahidə kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+### 1.10. BMI qrupları üzrə pasiyent paylanması
+```{r bmi_qruplari_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+bmi_pasiyent_data = umumi_data %>%
+filter(DESCRIPTION == "Body Mass Index") %>%
+filter(!is.na(VALUE_NUM)) %>%
+group_by(PATIENT) %>%
+summarise(orta_bmi = mean(VALUE_NUM, na.rm = TRUE),
+.groups = "drop") %>%
+mutate(bmi_qrupu = case_when(
+orta_bmi < 18.5 ~ "Aşağı BMI",
+orta_bmi >= 18.5 & orta_bmi < 25 ~ "Normal BMI",
+orta_bmi >= 25 & orta_bmi < 30 ~ "Artıq çəki",
+orta_bmi >= 30 & orta_bmi < 40 ~ "Piylənmə",
+orta_bmi >= 40 ~ "Yüksək piylənmə",
+TRUE ~ "Bilinmir"),
+bmi_qrupu = factor(
+bmi_qrupu,levels = c("Aşağı BMI", "Normal BMI", "Artıq çəki", "Piylənmə", "Yüksək piylənmə")))
+bmi_qrup_paylanma = bmi_pasiyent_data %>%
+count(bmi_qrupu, name = "pasiyent_sayi") %>%mutate(
+faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1))
+
+bmi_qrup_paylanma
+
+
+
+ggplot(bmi_qrup_paylanma,
+aes(x = bmi_qrupu, y = pasiyent_sayi, fill = bmi_qrupu)) +
+geom_col() +
+geom_text(aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),
+vjust = -0.3,size = 4) +
+scale_y_continuous(
+limits = c(0, max(bmi_qrup_paylanma$pasiyent_sayi) * 1.15)) +
+labs(title = "BMI qrupları üzrə pasiyent paylanması",
+x = "BMI qrupu",
+y = "Pasiyent sayı") +theme_minimal() +theme(legend.position = "none",
+axis.text.x = element_text(angle = 25, hjust = 1))
+
+
+```
+
+BMI qrupları üzrə pasiyent paylanmasına baxdıqda ən böyük qrupun piylənmə qrupu olduğu görünür. Bu qrupda 41,037 pasiyent var və BMI məlumatı olan pasiyentlərin 39.2%-ni təşkil edir. Normal BMI qrupunda 19,179 pasiyent, artıq çəki qrupunda isə 17,150 pasiyent qeydə alınmışdır. Bu nəticə BMI göstəricisi mövcud olan pasiyentlərin böyük hissəsinin piylənmə qrupunda toplandığını göstərir.
+
+
+
+
+
+
+
+### 1.11. Glucose qrupuna görə orta A1c
+```{r glucose_qrupuna_gore_a1c, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+glucose_a1c_data = umumi_data %>%
+filter(DESCRIPTION %in% c("Glucose", "Hemoglobin A1c/Hemoglobin.total in Blood")) %>%
+filter(!is.na(VALUE_NUM)) %>%
+select(PATIENT, DESCRIPTION, VALUE_NUM) %>%
+group_by(PATIENT, DESCRIPTION) %>%
+summarise(
+orta_deyer = mean(VALUE_NUM, na.rm = TRUE),
+.groups = "drop")
+glucose_a1c_data = dcast(
+glucose_a1c_data,
+PATIENT ~ DESCRIPTION,
+value.var = "orta_deyer")
+glucose_a1c_data = glucose_a1c_data %>%filter(!is.na(Glucose)) %>%
+filter(!is.na(`Hemoglobin A1c/Hemoglobin.total in Blood`)) %>%
+mutate(glucose_qrupu = case_when(
+Glucose < 70 ~ "Aşağı glucose",
+Glucose >= 70 & Glucose < 100 ~ "Normal glucose",
+Glucose >= 100 & Glucose < 126 ~ "Yüksək glucose",
+Glucose >= 126 ~ "Çox yüksək glucose",
+TRUE ~ "Bilinmir"),
+glucose_qrupu = factor(
+glucose_qrupu,
+levels = c("Aşağı glucose", "Normal glucose", "Yüksək glucose", "Çox yüksək glucose")))
+glucose_qrup_a1c = glucose_a1c_data %>%
+group_by(glucose_qrupu) %>%
+summarise(
+pasiyent_sayi = n(),
+orta_a1c = round(mean(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),
+median_a1c = round(median(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),
+minimum_a1c = round(min(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),
+maksimum_a1c = round(max(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),
+.groups = "drop")
+
+glucose_qrup_a1c
+
+
+```
+
+Glucose qruplarına görə A1c nəticələrinə baxdıqda çox yüksək glucose qrupunda A1c göstəricisinin daha yüksək olduğu görünür. Normal glucose qrupunda orta A1c 6.05, yüksək glucose qrupunda isə 6.04 olduğu halda, çox yüksək glucose qrupunda bu göstərici 7.65-ə yüksəlmişdir. Median A1c də çox yüksək glucose qrupunda 8.0 olmuşdur. Bu nəticə glucose qrupları üzrə A1c orta dəyərlərinin eyni olmadığını göstərir. Nəticə diaqnoz kimi yox, glucose və A1c göstəricilərinin birlikdə deskriptiv qiymətləndirilməsi kimi təqdim olunmalıdır.
+
+
+
+
+
+
+
+### 1.12. Cins və yaş qrupları üzrə pasiyent paylanması
+```{r cins_ve_yas_qruplari_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+cins_yas_paylanmasi = pasientler %>%
+filter(!is.na(GENDER)) %>%
+filter(!is.na(yas_qrupu)) %>%
+mutate(yas_qrupu = factor(
+yas_qrupu,levels = c("0-17", "18-34", "35-49", "50-64", "65+"))) %>%
+count(GENDER, yas_qrupu, name = "pasiyent_sayi") %>%
+group_by(GENDER) %>%mutate(
+faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1)) %>%
+ungroup() %>%
+arrange(GENDER, yas_qrupu)
+
+cins_yas_paylanmasi
+
+
+
+ggplot(cins_yas_paylanmasi,
+aes(x = yas_qrupu, y = pasiyent_sayi, fill = yas_qrupu)) +
+geom_col() +geom_text(
+aes(label = pasiyent_sayi),
+vjust = -0.3,size = 3.5) +
+facet_wrap(~ GENDER) +
+scale_y_continuous(limits = c(0, max(cins_yas_paylanmasi$pasiyent_sayi) * 1.15)) +
+labs(title = "Cins və yaş qrupları üzrə pasiyent paylanması",
+x = "Yaş qrupu",y = "Pasiyent sayı") +
+theme_minimal() +theme(
+legend.position = "none",
+axis.text.x = element_text(angle = 25, hjust = 1))
+
+```
+
+Cins və yaş qrupları üzrə pasiyent paylanmasına baxdıqda həm qadın, həm də kişi pasiyentlərdə ən böyük qrupun 65+ yaş qrupu olduğu görünür. Qadınlarda 65+ yaş qrupunda 19,033 pasiyent, kişilərdə isə 20,549 pasiyent var. Digər yaş qruplarında da kişi və qadın pasiyent sayları bir-birinə yaxın görünür. Bu analiz cins və yaş dəyişənlərinə birlikdə baxmaq üçün istifadə olunmuşdur və datasetdə cins üzrə ümumi balansın yaş qrupları daxilində də əsasən qorunduğunu göstərir.
+
+
+
+
+
+
+
+### 1.13. Müraciət növü üzrə unikal pasiyent sayı
+```{r muraciet_novu_uzre_unikal_pasiyent_sayi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+muraciet_novu_unikal_pasiyent = muracietler %>%
+filter(!is.na(DESCRIPTION)) %>%
+group_by(DESCRIPTION) %>%
+summarise(unikal_pasiyent_sayi = n_distinct(PATIENT),
+.groups = "drop") %>%
+arrange(desc(unikal_pasiyent_sayi))
+head(muraciet_novu_unikal_pasiyent, 10)
+muraciet_novu_unikal_top10 = muraciet_novu_unikal_pasiyent %>%
+head(10)
+
+
+
+ggplot(muraciet_novu_unikal_top10,
+aes(x = reorder(DESCRIPTION, unikal_pasiyent_sayi),
+y = unikal_pasiyent_sayi,
+fill = DESCRIPTION)) +
+geom_col() +
+geom_text(
+aes(label = unikal_pasiyent_sayi),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(muraciet_novu_unikal_top10$unikal_pasiyent_sayi) * 1.15)) +labs(
+title = "Müraciət növü üzrə unikal pasiyent sayı",
+x = "Müraciət növü",
+y = "Unikal pasiyent sayı") +theme_minimal() +
+theme(legend.position = "none")
+
+
+
+
+```
+
+Müraciət növü üzrə unikal pasiyent sayına baxdıqda ən çox fərqli pasiyentin Outpatient Encounter müraciət növündə qeydə alındığı görünür. Bu müraciət növündə 107,310 unikal pasiyent iştirak etmişdir. İkinci yerdə Encounter for symptom gəlir və burada 86,871 unikal pasiyent qeydə alınmışdır. Bu analiz ümumi müraciət sayından fərqlidir, çünki bir pasiyent eyni müraciət növü üzrə bir neçə dəfə müraciət edə bilər. Nəticə müraciət növlərinin pasiyentlər arasında yayılmasını daha aydın göstərir.
+
+
+
+
+
+
+
+### 1.14. Yaş qrupları üzrə müraciət sayı
+```{r yas_qruplari_uzre_muraciet_sayi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+yas_qrupu_muraciet_sayi = muracietler %>%
+left_join(pasientler_join, by = c("PATIENT" = "ID")) %>%
+filter(!is.na(yas_qrupu)) %>% mutate(
+yas_qrupu = factor(yas_qrupu,
+levels = c("0-17", "18-34", "35-49", "50-64", "65+"))) %>%
+count(yas_qrupu, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1))
+
+yas_qrupu_muraciet_sayi
+
+
+
+
+ggplot(yas_qrupu_muraciet_sayi,
+aes(x = yas_qrupu, y = muraciet_sayi, fill = yas_qrupu)) +
+geom_col() +
+geom_text(
+aes(label = paste0(muraciet_sayi, " (", faiz, "%)")),
+vjust = -0.3,
+size = 4) +
+scale_y_continuous(
+limits = c(0, max(yas_qrupu_muraciet_sayi$muraciet_sayi) * 1.15)) +
+labs(title = "Yaş qrupları üzrə müraciət sayı",
+x = "Yaş qrupu",
+y = "Müraciət sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+
+```
+
+Yaş qrupları üzrə müraciət sayına baxdıqda ən çox müraciətin 0-17 və 18-34 yaş qruplarında qeydə alındığı görünür. 0-17 yaş qrupunda 320,357 müraciət, 18-34 yaş qrupunda isə 319,836 müraciət qeydə alınmışdır və hər iki qrup ümumi müraciətlərin 25.4%-ni təşkil edir. Ən az müraciət isə 35-49 yaş qrupunda qeydə alınmışdır. Bu analiz pasiyent sayından fərqli olaraq, yaş qrupları üzrə ümumi müraciət aktivliyini göstərir və bəzi yaş qruplarında pasiyent sayı az olsa da müraciət sayının daha yüksək ola biləcəyini göstərir.
+
+
+
+
+
+
+
+### 1.15. Cins üzrə müraciət sayı
+```{r cins_uzre_muraciet_sayi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+cins_muraciet_sayi = muracietler %>%
+left_join(pasientler_join, by = c("PATIENT" = "ID")) %>%
+filter(!is.na(GENDER)) %>%
+count(GENDER, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1)) %>%arrange(desc(muraciet_sayi))
+
+cins_muraciet_sayi
+
+
+
+ggplot(cins_muraciet_sayi,
+aes(x = GENDER, y = muraciet_sayi, fill = GENDER)) +
+geom_col() +
+geom_text(
+aes(label = paste0(muraciet_sayi, " (", faiz, "%)")),
+vjust = -0.3,
+size = 4) +
+scale_fill_manual(
+values = c("F" = "pink", "M" = "blue")) +
+scale_y_continuous(
+limits = c(0, max(cins_muraciet_sayi$muraciet_sayi) * 1.15)) +
+labs(title = "Cins üzrə müraciət sayı",
+x = "Cins",
+y = "Müraciət sayı",
+fill = "Cins") +
+theme_minimal()
+
+
+```
+
+Cins üzrə müraciət sayına baxdıqda qadın pasiyentlər üzrə müraciət sayının kişi pasiyentlərdən daha çox olduğu görünür. Qadın pasiyentlər üzrə 716,068 müraciət qeydə alınmışdır və bu ümumi müraciətlərin 56.8%-ni təşkil edir. Kişi pasiyentlər üzrə isə 544,981 müraciət qeydə alınmışdır və bu 43.2%-ə bərabərdir. Bu nəticə cins üzrə pasiyent sayı balanslı olsa da, müraciət sayının qadın pasiyentlərdə daha yüksək olduğunu göstərir. Bu fərq yalnız deskriptiv müşahidə kimi təqdim olunur və səbəb-nəticə əlaqəsi kimi qiymətləndirilməməlidir.
+
+
+
+
+
+
+
+### 1.16. Aylara görə müraciət sayı
+```{r aylara_gore_muraciet_sayi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+aylara_gore_muraciet_sayi = muracietler %>%
+mutate(ay = month(DATE),
+ay_adi = case_when(
+ay == 1 ~ "Yanvar",
+ay == 2 ~ "Fevral",
+ay == 3 ~ "Mart",
+ay == 4 ~ "Aprel",
+ay == 5 ~ "May",
+ay == 6 ~ "İyun",
+ay == 7 ~ "İyul",
+ay == 8 ~ "Avqust",
+ay == 9 ~ "Sentyabr",
+ay == 10 ~ "Oktyabr",
+ay == 11 ~ "Noyabr",
+ay == 12 ~ "Dekabr",
+TRUE ~ "Bilinmir"),
+ay_adi = factor(
+ay_adi,
+levels = c("Yanvar", "Fevral", "Mart", "Aprel", "May", "İyun",
+"İyul", "Avqust", "Sentyabr", "Oktyabr", "Noyabr", "Dekabr"))) %>%
+count(ay_adi, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1)) %>%
+arrange(ay_adi)
+aylara_gore_muraciet_sayi
+
+
+
+
+
+ggplot(aylara_gore_muraciet_sayi,
+aes(x = ay_adi, y = muraciet_sayi, group = 1)) +
+geom_line(size = 1) +
+geom_point(size = 3) +
+geom_text(
+aes(label = muraciet_sayi),
+vjust = -0.8,
+size = 3) +
+scale_y_continuous(
+limits = c(0, max(aylara_gore_muraciet_sayi$muraciet_sayi) * 1.15)) +
+labs(title = "Aylara görə müraciət sayı",
+x = "Ay",
+y = "Müraciət sayı") +
+theme_minimal() +
+theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+```
+
+Aylara görə müraciət sayına baxdıqda müraciətlərin aylar üzrə ümumilikdə yaxın aralıqda paylandığı görünür. Ən az müraciət fevral ayında, ən çox müraciət isə mart ayında qeydə alınmışdır. Aylıq müraciət sayı təxminən 97 min ilə 108 min arasında dəyişir. Bu analiz müraciətlərin il ərzində ümumi zaman paylanmasını göstərir və aylıq dəyişmələr kəskin fərq kimi görünmür.
+
+
+
+
+
+
+
+
+### 1.17. Müraciət ili üzrə müraciət sayı
+```{r muraciet_ili_uzre_muraciet_sayi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+muraciet_ili_paylanma = muracietler %>%
+filter(!is.na(DATE)) %>%
+mutate( muraciet_ili = year(DATE)) %>%
+count(muraciet_ili, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1)) %>%
+arrange(muraciet_ili)
+
+muraciet_ili_paylanma
+
+
+
+muraciet_ili_qrafik = muraciet_ili_paylanma %>%
+filter(muraciet_sayi >= 1000)
+
+ggplot(muraciet_ili_qrafik,
+aes(x = factor(muraciet_ili), y = muraciet_sayi, fill = factor(muraciet_ili))) +
+geom_col() +
+geom_text(aes(label = muraciet_sayi),
+vjust = -0.3,
+size = 3) +
+scale_y_continuous(
+limits = c(0, max(muraciet_ili_qrafik$muraciet_sayi) * 1.15)) +labs(
+title = "Əsas illər üzrə müraciət sayı",
+x = "Müraciət ili",
+y = "Müraciət sayı") +
+theme_minimal() +theme(
+legend.position = "none",
+axis.text.x = element_text(angle = 30, hjust = 1))
+
+
+```
+
+Müraciət ili üzrə müraciət sayına baxdıqda əsas müraciətlərin 2010-2017 illəri arasında toplandığı görünür. Qrafikdə müraciət sayı 1000-dən çox olan əsas illər göstərilmişdir, çünki daha köhnə illərdə müraciət sayı çox azdır və onların qrafikə daxil edilməsi vizual müqayisəni çətinləşdirir. 2011-2016 illəri arasında müraciət sayı bir-birinə yaxın olmuşdur və hər il təxminən 178 min - 180 min aralığında müraciət qeydə alınmışdır. 2010 və 2017 illərində isə müraciət sayı digər əsas illərlə müqayisədə daha aşağıdır. Bu analiz müraciətlərin illər üzrə ümumi zaman paylanmasını göstərir.
+
+
+
+
+
+
+
+### 1.18. Mövcud müraciət səbəbləri üzrə paylanma
+```{r movcud_muraciet_sebebleri_uzre_paylanma, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+muraciet_sebeb_paylanma = muracietler %>%
+filter(!is.na(REASONDESCRIPTION)) %>%
+filter(REASONDESCRIPTION != "") %>%
+count(REASONDESCRIPTION, name = "muraciet_sayi") %>%
+mutate(faiz = round(muraciet_sayi / sum(muraciet_sayi) * 100, 1)) %>%
+arrange(desc(muraciet_sayi))
+head(muraciet_sebeb_paylanma, 10)
+muraciet_sebeb_top10 = muraciet_sebeb_paylanma %>%
+head(10)
+
+
+
+
+ggplot(muraciet_sebeb_top10,
+aes(x = reorder(REASONDESCRIPTION, muraciet_sayi),
+y = muraciet_sayi,
+fill = REASONDESCRIPTION)) +
+geom_col() +
+geom_text(
+aes(label = paste0(muraciet_sayi, " (", faiz, "%)")),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(muraciet_sebeb_top10$muraciet_sayi) * 1.15)) +
+labs(title = "Mövcud müraciət səbəbləri üzrə paylanma",
+x = "Müraciət səbəbi",
+y = "Müraciət sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+
+
+
+```
+
+Mövcud müraciət səbəbləri üzrə paylanmaya baxdıqda normal hamiləlik ən çox qeyd olunan səbəb kimi görünür. Bu səbəb 85,200 dəfə qeydə alınmışdır və mövcud səbəb məlumatlarının 23.9%-ni təşkil edir. İkinci yerdə virus mənşəli sinus iltihabı gəlir və 74,093 müraciətlə 20.8% paya malikdir. Növbəti əsas səbəblər isə kəskin virus mənşəli boğaz iltihabı və kəskin bronxit olmuşdur. Bu nəticələr yalnız müraciət səbəbi məlumatı mövcud olan qeydlər əsasında hesablanmışdır. Normal hamiləlik xəstəlik deyil, lakin datada müraciət səbəbi kimi qeyd olunduğu üçün bu deskriptiv paylanmada göstərilmişdir. Nəticələr ən çox xəstəliklər kimi yox, mövcud müraciət səbəblərinin paylanması kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+### 1.19. İrq üzrə pasiyent paylanması
+```{r race_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+race_paylanmasi = pasientler %>%
+filter(!is.na(RACE)) %>%
+count(RACE, name = "pasiyent_sayi") %>%
+mutate(faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1)) %>%
+arrange(desc(pasiyent_sayi))
+race_paylanmasi
+
+
+
+ggplot(race_paylanmasi,
+aes(x = reorder(RACE, pasiyent_sayi),
+y = pasiyent_sayi,
+fill = RACE)) +
+geom_col() +
+geom_text(aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),hjust = -0.1,
+size = 3) +
+coord_flip() +scale_y_continuous(
+limits = c(0, max(race_paylanmasi$pasiyent_sayi) * 1.15)) +
+labs(title = "İrq üzrə pasiyent paylanması",
+x = "İrq",
+y = "Pasiyent sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+
+```
+
+Irq üzrə pasiyent paylanmasına baxdıqda datasetdə ən böyük qrupun white olduğu görünür. Bu qrupda 102,615 pasiyent var və ümumi pasiyentlərin 77.4%-ni təşkil edir. Digər qrupların payı daha aşağıdır: hispanic 9.7%, black 7.2%, asian isə 5.8% təşkil edir. native qrupunda isə yalnız 12 pasiyent olduğu üçün bu qrup üzrə ayrıca interpretasiya aparmaq düzgün deyil. Bu analiz yalnız datanın demoqrafik strukturunu göstərən əlavə deskriptiv baxış kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+### 1.20. Etnik qrup üzrə pasiyent paylanması
+```{r ethnicity_uzre_pasiyent_paylanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+ethnicity_paylanmasi = pasientler %>%
+filter(!is.na(ETHNICITY)) %>%
+count(ETHNICITY, name = "pasiyent_sayi") %>%
+mutate(faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1)) %>%
+arrange(desc(pasiyent_sayi))
+ethnicity_paylanmasi
+
+
+
+
+
+ggplot(ethnicity_paylanmasi,
+aes(x = reorder(ETHNICITY, pasiyent_sayi),
+y = pasiyent_sayi,
+fill = ETHNICITY)) +
+geom_col() +
+geom_text(aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(limits = c(0, max(ethnicity_paylanmasi$pasiyent_sayi) * 1.15)) +
+labs(title = "Etnik qrup üzrə pasiyent paylanması",
+x = "Etnik qrup",
+y = "Pasiyent sayı") +
+theme_minimal() +
+theme(legend.position = "none")
+
+```
+
+Etnik qrup üzrə pasiyent paylanmasına baxdıqda datasetdə ən böyük qrupun irish olduğu görünür. Bu qrupda 27,453 pasiyent var və ümumi pasiyentlərin 20.7%-ni təşkil edir. İkinci yerdə italian qrupu gəlir: 16,702 pasiyent və 12.6%. Daha sonra english 13,078 pasiyentlə 9.9%, french isə 9,529 pasiyentlə 7.2% paya malikdir. Bu analiz pasiyentlərin etnik qruplar üzrə demoqrafik paylanmasını göstərir. Qruplar arasında say fərqləri olduğu üçün nəticə klinik fərq kimi yox, yalnız əlavə deskriptiv demoqrafik baxış kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+### 1.21. Klinik göstəricilər üzrə vahidlərə görə ölçmə sayı
+```{r klinik_gostericiler_uzre_vahidler, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+esas_gostericiler = c(
+"Body Mass Index",
+"Systolic Blood Pressure",
+"Diastolic Blood Pressure",
+"Glucose",
+"Hemoglobin A1c/Hemoglobin.total in Blood",
+"Total Cholesterol",
+"Triglycerides")
+vahid_paylanmasi = umumi_data %>%
+filter(DESCRIPTION %in% esas_gostericiler) %>%
+filter(!is.na(UNITS)) %>%
+count(DESCRIPTION, UNITS, name = "olcme_sayi") %>%
+arrange(desc(olcme_sayi))
+vahid_paylanmasi
+vahid_top = vahid_paylanmasi %>%
+group_by(UNITS) %>%
+summarise(
+olcme_sayi = sum(olcme_sayi),
+.groups = "drop") %>%
+mutate(
+vahid_aciqlama = case_when(
+UNITS == "mmHg" ~ "mmHg - Qan təzyiqi",
+UNITS == "kg/m2" ~ "kg/m2 - BMI",
+UNITS == "mg/dL" ~ "mg/dL - Glucose və lipid göstəriciləri",
+UNITS == "%" ~ "% - A1c",
+TRUE ~ UNITS)) %>%
+arrange(desc(olcme_sayi))
+vahid_top
+
+
+
+
+ggplot(vahid_top,
+aes(x = reorder(vahid_aciqlama, olcme_sayi),
+y = olcme_sayi,
+fill = vahid_aciqlama)) +
+geom_col() +
+geom_text(
+aes(label = olcme_sayi),
+hjust = -0.1,
+size = 3) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(vahid_top$olcme_sayi) * 1.15)) +
+labs(title = "Klinik göstəricilər üzrə vahidlərin paylanması",
+x = "Ölçü vahidi",
+y = "Ölçmə sayı") +
+theme_minimal() +theme(
+legend.position = "none")
+```
+
+Klinik göstəricilər üzrə vahidlərin paylanmasına baxdıqda ən çox istifadə olunan ölçü vahidinin mmHg olduğu görünür. Bu vahid sistolik və diastolik qan təzyiqi ölçmələrinə aiddir və ümumilikdə 1,177,312 ölçmə qeydə alınmışdır. kg/m2 vahidi BMI göstəricisi üçün istifadə olunmuşdur və 518,213 ölçmə vardır. mg/dL vahidi glucose və lipid göstəriciləri üçün istifadə olunmuşdur və 430,186 ölçmə qeydə alınmışdır. % vahidi isə A1c göstəricisini ifadə edir və 316,248 ölçmə mövcuddur. Bu analiz əsas klinik göstəricilərin hansı ölçü vahidləri ilə qeydə alındığını göstərən texniki deskriptiv baxışdır.
+
+
+
+
+
+
+
+## 2. Anomaliyalar
+Bu bölmədə datada texniki və klinik baxımdan diqqət tələb edən hallar yoxlanılır. Məqsəd boş dəyərləri, qeyri-real ölçmələri və cədvəllərarası uyğunluq problemlərini müəyyən etməkdir. Bu nəticələr diaqnoz kimi deyil, data keyfiyyəti və analiz məhdudiyyəti kimi qiymətləndirilir.
+
+
+
+
+
+
+
+### 2.1. Müşahidə və müraciət tarixləri arasında 1 ildən çox fərq
+```{r observation_encounter_tarix_ferqi_anomaliya, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=10, fig.height=5}
+
+obs_encounter_tarix_ferqi = umumi_data %>%
+filter(!is.na(DATE)) %>%
+filter(!is.na(muraciet_tarixi)) %>%
+mutate(tarix_ferqi = as.numeric(DATE - muraciet_tarixi)) %>%
+filter(abs(tarix_ferqi) > 365)
+obs_encounter_tarix_ferqi_xulase = obs_encounter_tarix_ferqi %>%
+summarise(boyuk_ferq_qeyd_sayi = n(),
+boyuk_ferq_pasiyent_sayi = n_distinct(PATIENT),
+boyuk_ferq_muraciet_sayi = n_distinct(ENCOUNTER),
+minimum_tarix_ferqi = min(tarix_ferqi, na.rm = TRUE),
+maksimum_tarix_ferqi = max(tarix_ferqi, na.rm = TRUE))
+obs_encounter_tarix_ferqi_xulase
+obs_encounter_tarix_ferqi_qrup = obs_encounter_tarix_ferqi %>%
+mutate(ferq_il = abs(tarix_ferqi) / 365,
+ferq_qrupu = case_when(
+ferq_il >= 1 & ferq_il < 3 ~ "1-3 il fərq",
+ferq_il >= 3 & ferq_il < 5 ~ "3-5 il fərq",
+ferq_il >= 5 ~ "5 ildən çox fərq",
+TRUE ~ "Digər")) %>%
+count(ferq_qrupu, name = "qeyd_sayi") %>%
+mutate(faiz = round(qeyd_sayi / sum(qeyd_sayi) * 100, 1),
+ferq_qrupu = factor(ferq_qrupu,
+levels = c("1-3 il fərq", "3-5 il fərq", "5 ildən çox fərq"))) %>%
+arrange(ferq_qrupu)
+obs_encounter_tarix_ferqi_qrup
+obs_encounter_tarix_ferqi_numune = obs_encounter_tarix_ferqi %>%
+select(PATIENT, ENCOUNTER, DATE, muraciet_tarixi, tarix_ferqi,
+DESCRIPTION, VALUE, UNITS, muraciet_novu) %>%
+arrange(desc(abs(tarix_ferqi))) %>%
+head(15)
+obs_encounter_tarix_ferqi_numune
+
+
+
+ggplot(obs_encounter_tarix_ferqi_qrup,
+aes(x = ferq_qrupu,
+y = qeyd_sayi,
+fill = ferq_qrupu)) +
+geom_col(width = 0.6) +
+geom_text(
+aes(label = paste0(qeyd_sayi, " (", faiz, "%)")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(obs_encounter_tarix_ferqi_qrup$qeyd_sayi) * 1.20)) +
+labs(title = "Müraciət və müşahidə tarixləri arasında illərlə fərq",
+x = "Tarix fərqinin böyüklüyü",
+y = "Qeyd sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5))
+
+```
+
+Bu yoxlamada müşahidələr datasındakı klinik ölçmə tarixi ilə həmin ölçmənin bağlı olduğu müraciət tarixi müqayisə edilmişdir. Normal halda klinik ölçmə ilə bağlı olduğu müraciət tarixi eyni günə və ya yaxın tarix aralığına düşməlidir. Lakin analiz nəticəsində müşahidə və müraciət tarixləri arasında 1 ildən çox fərq olan 54,519 qeyd aşkar edilmişdir. Bu qeydlər 2,478 pasiyent və 2,780 müraciət ilə bağlıdır.
+
+Qrafik bu fərqlərin böyüklüyünü daha aydın göstərir. Böyük tarix fərqi olan qeydlərin 38,527-si, yəni 70.7%-i 1-3 il aralığındadır. 13,430 qeyd, yəni 24.6%-i 3-5 il aralığında, 2,562 qeyd isə 5 ildən çox fərqə malikdir. Bu o deməkdir ki, bəzi klinik ölçmələr bağlı olduğu müraciət tarixindən bir neçə il fərqli tarixdə görünür.
+
+Ən böyük tarix fərqi 3436 gün olmuşdur ki, bu da təxminən 9 ildən çox fərq deməkdir. Minimum tarix fərqi isə -2405 gündür. Bu nəticə göstərir ki, problem yalnız müşahidə tarixinin müraciət tarixindən sonra düşməsi ilə məhdudlaşmır; bəzi hallarda müşahidə tarixi müraciət tarixindən əvvəl də görünür.
+
+Bu qədər böyük fərqlər sadə texniki gecikmə və ya gündəlik tarix fərqi kimi izah oluna bilməz. Bu nəticə müşahidə və müraciət tarixləri arasında ciddi tarix uyğunluğu problemi olduğunu göstərir.
+
+
+
+
+
+
+
+### 2.2. Ölüm kağızı və ölüm tarixi arasında uyğunsuzluq
+```{r death_certification_deathdate_uygunsuzlugu, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=9, fig.height=5}
+
+death_cert_data = muracietler %>%
+filter(DESCRIPTION == "Death Certification") %>%
+left_join(pasientler %>%
+select(ID, BIRTHDATE, DEATHDATE, GENDER, RACE, ETHNICITY),
+by = c("PATIENT" = "ID"))
+death_cert_xulase = death_cert_data %>%
+summarise(death_cert_qeyd_sayi = n(),
+death_cert_pasiyent_sayi = n_distinct(PATIENT),
+deathdate_bos_qeyd_sayi = sum(is.na(DEATHDATE)),
+deathdate_bos_pasiyent_sayi = n_distinct(PATIENT[is.na(DEATHDATE)]),
+olumden_evvel_death_cert_qeyd_sayi = sum(!is.na(DEATHDATE) & DATE < DEATHDATE),
+olumden_evvel_death_cert_pasiyent_sayi = n_distinct(PATIENT[!is.na(DEATHDATE) & DATE < DEATHDATE]))
+death_cert_xulase
+death_cert_anomaliya = data.frame(
+anomaliya = c(
+"Ölüm kağızı var, amma ölüm tarixi boşdur",
+"Ölüm kağızı tarixi ölüm tarixindən əvvəldir"),
+qeyd_sayi = c(
+death_cert_xulase$deathdate_bos_qeyd_sayi,
+death_cert_xulase$olumden_evvel_death_cert_qeyd_sayi),
+pasiyent_sayi = c(
+death_cert_xulase$deathdate_bos_pasiyent_sayi,
+death_cert_xulase$olumden_evvel_death_cert_pasiyent_sayi))
+death_cert_anomaliya
+deathdate_bos_numune = death_cert_data %>%
+filter(is.na(DEATHDATE)) %>%
+select(PATIENT, ID, DATE, DEATHDATE, DESCRIPTION, GENDER, RACE, ETHNICITY) %>%
+head(10)
+deathdate_bos_numune
+death_cert_olumden_evvel_numune = death_cert_data %>%
+filter(!is.na(DEATHDATE)) %>%
+filter(DATE < DEATHDATE) %>%
+mutate(gun_ferqi = as.numeric(DEATHDATE - DATE)) %>%
+select(PATIENT, ID, DATE, DEATHDATE, gun_ferqi, DESCRIPTION, GENDER, RACE, ETHNICITY) %>%
+arrange(desc(gun_ferqi)) %>%
+head(10)
+death_cert_olumden_evvel_numune
+
+
+
+ggplot(death_cert_anomaliya,
+aes(x = reorder(anomaliya, qeyd_sayi),
+y = qeyd_sayi,
+fill = anomaliya)) +
+geom_col(width = 0.6) +
+geom_text(
+aes(label = paste0(qeyd_sayi, " qeyd / ", pasiyent_sayi, " pasiyent")),
+hjust = -0.05,
+size = 3.5) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(death_cert_anomaliya$qeyd_sayi) * 1.35)) +
+labs(title = "Ölüm kağızı və ölüm tarixi uyğunsuzluğu",
+x = "Uyğunsuzluq növü",
+y = "Qeyd sayı") +
+theme_minimal() +theme(
+legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5),
+axis.text.y = element_text(size = 9))
+```
+Bu yoxlamada ölüm kağızı qeydləri ilə pasiyent datasındakı ölüm tarixi məlumatı müqayisə edilmişdir. Normal halda ölüm kağızı olan pasiyentdə ölüm tarixi də mövcud olmalı və ölüm kağızının tarixi ölüm tarixindən əvvəl düşməməlidir.
+
+Analiz nəticəsində ölüm kağızı olduğu halda ölüm tarixi boş olan 32 qeyd və 32 pasiyent aşkar edilmişdir. Bundan əlavə, 11 qeyd üzrə ölüm kağızı tarixi pasiyentin ölüm tarixindən əvvəl görünür. Bu iki hal ölüm kağızı ilə ölüm tarixi arasında məntiqi uyğunsuzluq olduğunu göstərir.
+
+Bu nəticə pasiyent və müraciət məlumatları arasında ölüm tarixi ilə bağlı data uyğunluğunun tam qorunmadığını göstərir. Ona görə bu tapıntı ölüm kağızı və ölüm tarixi arasında data keyfiyyəti problemi kimi qiymətləndirilmişdir.
+
+
+
+
+
+
+
+### 2.3. Vəfat tarixindən sonra klinik və müraciət qeydləri
+```{r vefatdan_sonra_klinik_ve_muraciet_qeydleri, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=9, fig.height=5}
+
+vefatdan_sonra_klinik = umumi_data %>%
+filter(!is.na(DEATHDATE)) %>%
+filter(!is.na(DATE)) %>%
+filter(DATE > DEATHDATE) %>%
+mutate(gun_ferqi = as.numeric(DATE - DEATHDATE))
+vefatdan_sonra_klinik_xulase = vefatdan_sonra_klinik %>%
+summarise(vefatdan_sonra_klinik_qeyd_sayi = n(),
+vefatdan_sonra_klinik_pasiyent_sayi = n_distinct(PATIENT),
+minimum_gun_ferqi = min(gun_ferqi, na.rm = TRUE),
+maksimum_gun_ferqi = max(gun_ferqi, na.rm = TRUE))
+vefatdan_sonra_klinik_xulase
+vefatdan_sonra_klinik_paylanma = vefatdan_sonra_klinik %>%
+count(DESCRIPTION, UNITS, name = "qeyd_sayi") %>%
+arrange(desc(qeyd_sayi))
+vefatdan_sonra_klinik_paylanma
+vefatdan_sonra_klinik_numune = vefatdan_sonra_klinik %>%
+select(PATIENT, ENCOUNTER, DATE, DEATHDATE, gun_ferqi,
+DESCRIPTION, VALUE, VALUE_NUM, UNITS, muraciet_novu) %>%
+arrange(PATIENT, DATE, DESCRIPTION) %>%
+head(20)
+vefatdan_sonra_klinik_numune
+vefatdan_sonra_muraciet = muracietler %>%
+left_join(
+pasientler %>%
+select(ID, DEATHDATE, BIRTHDATE, GENDER, RACE, ETHNICITY),
+by = c("PATIENT" = "ID")) %>%
+filter(!is.na(DEATHDATE)) %>%
+filter(!is.na(DATE)) %>%
+filter(DATE > DEATHDATE)
+vefatdan_sonra_real_muraciet = vefatdan_sonra_muraciet %>%
+filter(DESCRIPTION != "Death Certification")
+vefatdan_sonra_muraciet_xulase = data.frame(
+yoxlama = c(
+"Vəfatdan sonra klinik ölçmə",
+"Vəfatdan sonra real müraciət"),
+qeyd_sayi = c(
+nrow(vefatdan_sonra_klinik),
+nrow(vefatdan_sonra_real_muraciet)),
+pasiyent_sayi = c(
+n_distinct(vefatdan_sonra_klinik$PATIENT),
+n_distinct(vefatdan_sonra_real_muraciet$PATIENT)))
+vefatdan_sonra_muraciet_xulase
+vefatdan_sonra_real_muraciet_numune = vefatdan_sonra_real_muraciet %>%
+mutate(gun_ferqi = as.numeric(DATE - DEATHDATE)) %>%
+select(PATIENT, ID, DATE, DEATHDATE, gun_ferqi,
+DESCRIPTION, REASONCODE, REASONDESCRIPTION, GENDER, RACE, ETHNICITY) %>%
+arrange(desc(gun_ferqi)) %>%
+head(10)
+vefatdan_sonra_real_muraciet_numune
+
+
+ggplot(vefatdan_sonra_muraciet_xulase,
+aes(x = yoxlama,
+y = qeyd_sayi,
+fill = yoxlama)) +
+geom_col(width = 0.55) +
+geom_text(aes(label = paste0(qeyd_sayi, " qeyd / ", pasiyent_sayi, " pasiyent")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(vefatdan_sonra_muraciet_xulase$qeyd_sayi) * 1.35)) +
+labs(title = "Vəfat tarixindən sonra qeydə alınan məlumatlar",
+x = "Yoxlama növü",
+y = "Qeyd sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5),
+axis.text.x = element_text(size = 9, angle = 10, hjust = 1))
+
+
+```
+
+Bu yoxlamada pasiyentin vəfat tarixindən sonra klinik ölçmə və ya real müraciət qeydinin olub-olmaması araşdırılmışdır. Normal halda vəfat tarixindən sonra pasiyent üçün aktiv klinik ölçmələrin və ya real müraciətlərin görünməsi gözlənilmir.
+
+Nəticədə vəfat tarixindən sonra 15 klinik ölçmə qeydi aşkar edilmişdir. Bu qeydlər 1 pasiyentə aiddir. Nümunələrdə pasiyentin vəfat tarixi 2015-07-05 olduğu halda, klinik ölçmə tarixi 2015-07-06 kimi görünür. Bu qeydlərə A1c, Body Height, Body Weight, BMI, Systolic Blood Pressure, Diastolic Blood Pressure, Glucose, Creatinine və digər klinik göstəricilər daxildir.
+
+Müraciət səviyyəsində də vəfat tarixindən sonra qeydlər yoxlanılmışdır. Ölüm kağızı qeydləri administrativ ölüm qeydi kimi qəbul edildiyi üçün ayrıca çıxarılmışdır. Bundan sonra vəfat tarixindən sonra 5 real müraciət qeydi qalmışdır.
+
+Bu nəticədə qeyd sayı çox böyük olmasa da, məntiqi uyğunsuzluq güclüdür: pasiyentin ölüm tarixindən sonra həm klinik ölçmə, həm də real müraciət qeydləri görünür. Buna görə bu tapıntı ölüm tarixi ilə sonrakı klinik və müraciət qeydləri arasında ciddi tarix uyğunsuzluğu kimi qiymətləndirilmişdir.
+
+
+
+
+
+
+
+### 2.4. A1c göstəricisində mənfi dəyərlər
+```{r a1c_menfi_deyerler_anomaliya, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=9, fig.height=5}
+
+a1c_menfi_deyerler = umumi_data %>%
+filter(DESCRIPTION == "Hemoglobin A1c/Hemoglobin.total in Blood") %>%
+filter(!is.na(VALUE_NUM)) %>%
+filter(VALUE_NUM < 0)
+a1c_menfi_xulase = a1c_menfi_deyerler %>%
+summarise(menfi_a1c_qeyd_sayi = n(),
+menfi_a1c_pasiyent_sayi = n_distinct(PATIENT),
+minimum_a1c = min(VALUE_NUM, na.rm = TRUE),
+maksimum_menfi_a1c = max(VALUE_NUM, na.rm = TRUE))
+a1c_menfi_xulase
+a1c_menfi_paylanma = a1c_menfi_deyerler %>%
+count(VALUE_NUM, name = "qeyd_sayi") %>%
+mutate(VALUE_NUM = as.numeric(VALUE_NUM),
+faiz = round(qeyd_sayi / sum(qeyd_sayi) * 100, 1)) %>%
+arrange(VALUE_NUM)
+a1c_menfi_paylanma
+a1c_menfi_numune = a1c_menfi_deyerler %>%
+select(PATIENT, ENCOUNTER, DATE, DESCRIPTION, VALUE, VALUE_NUM, UNITS, muraciet_tarixi, muraciet_novu) %>%
+arrange(VALUE_NUM) %>%
+head(15)
+a1c_menfi_numune
+
+
+
+
+ggplot(a1c_menfi_paylanma,
+aes(x = factor(VALUE_NUM),
+y = qeyd_sayi,
+fill = factor(VALUE_NUM))) +
+geom_col(width = 0.65) +
+geom_text(aes(label = paste0(qeyd_sayi, " qeyd")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(a1c_menfi_paylanma$qeyd_sayi) * 1.25)) +
+labs(title = "A1c göstəricisində mənfi dəyərlər",
+x = "A1c dəyəri",
+y = "Qeyd sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5))
+```
+
+Bu yoxlamada Hemoglobin A1c/Hemoglobin.total in Blood göstəricisində mənfi dəyərlərin olub-olmaması araşdırılmışdır. A1c faizlə ifadə olunan klinik göstəricidir və klinik baxımdan mənfi dəyər ala bilməz.
+
+Analiz nəticəsində A1c göstəricisində 122 mənfi dəyər aşkar edilmişdir. Minimum A1c dəyəri -0.9, maksimum mənfi A1c dəyəri isə -0.1 olmuşdur. Bu dəyərlər klinik baxımdan real nəticə kimi qəbul edilə bilməz.
+
+Qrafikdə mənfi A1c dəyərlərinin hansı qiymətlər üzrə paylandığı göstərilmişdir. Bu nəticə ölçmə, data daxil etmə və ya data generasiya mərhələsində texniki problem ola biləcəyini göstərir. Buna görə A1c göstəricisindəki mənfi dəyərlər klinik ölçmə anomaliyası kimi qiymətləndirilmişdir.
+
+
+
+
+
+
+
+
+### 2.5. Müraciət səbəbi məlumatında yüksək boşluq faizi
+```{r reasondescription_bosluq_anomaliya, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=9, fig.height=5}
+
+reason_bosluq = muracietler %>%
+summarise(toplam_muraciet = n(),
+reason_na = sum(is.na(REASONDESCRIPTION)),
+reason_bos_string = sum(REASONDESCRIPTION == "", na.rm = TRUE),
+reason_umumi_bos = reason_na + reason_bos_string,
+reason_dolu = toplam_muraciet - reason_umumi_bos,
+reason_bos_faiz = round(reason_umumi_bos / toplam_muraciet * 100, 1),
+reason_dolu_faiz = round(reason_dolu / toplam_muraciet * 100, 1))
+reason_bosluq
+reason_bosluq_qrafik = data.frame(
+status = c("Səbəb məlumatı boşdur", "Səbəb məlumatı mövcuddur"),
+qeyd_sayi = c(reason_bosluq$reason_umumi_bos,
+reason_bosluq$reason_dolu),
+faiz = c(
+reason_bosluq$reason_bos_faiz,
+reason_bosluq$reason_dolu_faiz))
+reason_bosluq_qrafik
+reason_bos_numune = muracietler %>%
+filter(is.na(REASONDESCRIPTION) | REASONDESCRIPTION == "") %>%
+select(ID, DATE, PATIENT, DESCRIPTION, REASONCODE, REASONDESCRIPTION) %>%
+head(15)
+reason_bos_numune
+
+
+
+
+
+ggplot(reason_bosluq_qrafik,
+aes(x = status,
+y = qeyd_sayi,
+fill = status)) +
+geom_col(width = 0.6) +
+geom_text(aes(label = paste0(qeyd_sayi, " qeyd / ", faiz, "%")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(reason_bosluq_qrafik$qeyd_sayi) * 1.20)) +
+labs(title = "Müraciət səbəbi məlumatının doluluq vəziyyəti",
+x = "Status",
+y = "Qeyd sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5),
+axis.text.x = element_text(angle = 15, hjust = 1))
+
+```
+
+Bu yoxlamada müraciətlər datasında səbəb məlumatının doluluq vəziyyəti araşdırılmışdır. Müraciət səbəbi pasiyentin hansı səbəblə müraciət etdiyini izah edən əsas məlumatlardan biridir. Buna görə bu məlumatın boş olması səbəb əsaslı analizlərin keyfiyyətinə birbaşa təsir edir.
+
+Analiz nəticəsində ümumi 1,263,669 müraciət qeydinin 907,763-də səbəb məlumatının boş olduğu müəyyən edilmişdir. Bu, bütün müraciətlərin 71.8%-ni təşkil edir. Başqa sözlə, müraciətlərin yalnız 28.2%-də səbəb açıqlaması mövcuddur.
+
+Qrafikdə də görünür ki, səbəb məlumatı boş olan qeydlərin payı mövcud səbəb məlumatı olan qeydlərdən xeyli çoxdur. Bu nəticə klinik ölçmə anomaliyası deyil, lakin ciddi data completeness problemidir. Səbəb məlumatındakı yüksək boşluq faizi müraciət səbəblərinə görə aparılan analizlərin məhdud interpretasiya olunmasına səbəb olur.
+
+
+
+
+
+
+
+## 3. Proqnoz və Fərziyyələr 
+Bu bölmədə klinik göstəricilər arasında sadə analitik əlaqələr və fərziyyələr yoxlanılır. Məqsəd pasiyentlərə diaqnoz qoymaq deyil, datada görünən risk siqnallarını və göstəricilərarası əlaqələri deskriptiv və statistik baxımdan qiymətləndirməkdir.
+
+Analizlər pasiyent səviyyəsində aparılmışdır. Bunun üçün eyni pasiyentin eyni klinik göstərici üzrə bir neçə ölçməsi varsa, həmin göstəricinin orta dəyəri hesablanmışdır. Bu yanaşma təkrar ölçmələrin təsirini azaltmaq və pasiyent səviyyəsində daha ümumi müqayisə aparmaq üçün istifadə edilmişdir.
+
+Bu bölmədə istifadə olunan risk siqnalları klinik diaqnoz kimi deyil, analitik müqayisə üçün yaradılmış göstəricilər kimi qəbul edilmişdir. Buna görə nəticələr “pasiyent xəstədir” kimi yox, “datada risk siqnalı görünür” formasında şərh olunmuşdur.
+
+
+
+
+
+
+
+### 3.0. Proqnoz datasının hazırlanması
+```{r proqnoz_datasinin_hazirlanmasi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE}
+
+proqnoz_gostericiler = c(
+"Body Mass Index",
+"Systolic Blood Pressure",
+"Glucose",
+"Hemoglobin A1c/Hemoglobin.total in Blood")
+proqnoz_data = umumi_data %>%
+filter(DESCRIPTION %in% proqnoz_gostericiler) %>%
+filter(!is.na(VALUE_NUM)) %>%
+select(PATIENT, DESCRIPTION, VALUE_NUM) %>%
+group_by(PATIENT, DESCRIPTION) %>%
+summarise(orta_deyer = mean(VALUE_NUM, na.rm = TRUE),.groups = "drop")
+proqnoz_data = dcast(
+proqnoz_data,
+PATIENT ~ DESCRIPTION,
+value.var = "orta_deyer")
+proqnoz_data = proqnoz_data %>%
+left_join(pasientler_join %>%
+select(ID, yas, yas_qrupu),
+by = c("PATIENT" = "ID")) %>%
+mutate(risk_siqnali_sayi = case_when(
+!is.na(`Body Mass Index`) &
+!is.na(`Systolic Blood Pressure`) &
+!is.na(Glucose) ~
+as.numeric(`Body Mass Index` >= 30) +
+as.numeric(`Systolic Blood Pressure` >= 140) +
+as.numeric(Glucose >= 126),
+TRUE ~ NA_real_))
+proqnoz_data_xulase = proqnoz_data %>%
+summarise(pasiyent_sayi = n(),
+bmi_melumatli = sum(!is.na(`Body Mass Index`)),
+sistolik_melumatli = sum(!is.na(`Systolic Blood Pressure`)),
+glucose_melumatli = sum(!is.na(Glucose)),
+a1c_melumatli = sum(!is.na(`Hemoglobin A1c/Hemoglobin.total in Blood`)),
+risk_hesablanan_pasiyent = sum(!is.na(risk_siqnali_sayi)))
+proqnoz_data_xulase
+
+```
+
+
+
+
+
+
+
+### 3.1. Glucose qrupları üzrə yüksək A1c faizi
+```{r glucose_qruplari_yuksek_a1c_faizi, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+
+glucose_a1c_risk_data = proqnoz_data %>%
+filter(!is.na(Glucose)) %>%
+filter(!is.na(`Hemoglobin A1c/Hemoglobin.total in Blood`)) %>%
+mutate(glucose_qrupu = case_when(
+Glucose < 70 ~ "Aşağı glucose",
+Glucose >= 70 & Glucose < 100 ~ "Normal glucose",
+Glucose >= 100 & Glucose < 126 ~ "Yüksək glucose",
+Glucose >= 126 ~ "Çox yüksək glucose",
+TRUE ~ "Bilinmir"),
+glucose_qrupu = factor(
+glucose_qrupu,
+levels = c("Aşağı glucose", "Normal glucose", "Yüksək glucose", "Çox yüksək glucose")),
+yuksek_a1c = case_when(`Hemoglobin A1c/Hemoglobin.total in Blood` >= 6.5 ~ 1,
+`Hemoglobin A1c/Hemoglobin.total in Blood` < 6.5 ~ 0,TRUE ~ NA_real_))
+glucose_a1c_risk_xulase = glucose_a1c_risk_data %>%
+group_by(glucose_qrupu) %>%
+summarise(pasiyent_sayi = n(),
+yuksek_a1c_pasiyent_sayi = sum(yuksek_a1c == 1, na.rm = TRUE),
+yuksek_a1c_faizi = round(yuksek_a1c_pasiyent_sayi / pasiyent_sayi * 100, 1),
+orta_a1c = round(mean(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),
+median_a1c = round(median(`Hemoglobin A1c/Hemoglobin.total in Blood`, na.rm = TRUE), 2),.groups = "drop")
+glucose_a1c_risk_xulase
+
+
+
+ggplot(glucose_a1c_risk_xulase,
+aes(x = glucose_qrupu,
+y = yuksek_a1c_faizi,
+fill = glucose_qrupu)) +
+geom_col(width = 0.65) +
+geom_text(
+aes(label = paste0(yuksek_a1c_faizi, "% / ", pasiyent_sayi, " pasiyent")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(limits = c(0, max(glucose_a1c_risk_xulase$yuksek_a1c_faizi) * 1.20)) +
+labs(title = "Glucose qrupları üzrə yüksək A1c faizi",
+x = "Glucose qrupu",
+y = "Yüksək A1c faizi") +
+theme_minimal() +theme(
+legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5),
+axis.text.x = element_text(angle = 15, hjust = 1))
+
+
+```
+
+Bu analizdə glucose qrupları üzrə yüksək A1c faizi yoxlanılmışdır. Fərziyyə belədir: glucose səviyyəsi yüksək olan pasiyentlərdə yüksək A1c göstəricisinin görünmə faizi daha çox ola bilər.
+
+Nəticəyə baxdıqda normal glucose qrupunda yüksək A1c faizi yalnız 1.6% olmuşdur. Aşağı glucose qrupunda bu göstərici 5.2% təşkil etmişdir. Lakin yüksək glucose qrupunda yüksək A1c faizi 59.2%-ə, çox yüksək glucose qrupunda isə 82.3%-ə yüksəlmişdir.
+
+Qrafik də bu fərqi aydın göstərir. Xüsusilə çox yüksək glucose qrupunda həm yüksək A1c faizi, həm də orta A1c dəyəri daha yüksəkdir. Bu nəticə glucose səviyyəsi artdıqca A1c üzrə risk siqnalının da artdığını göstərir.
+
+Bu nəticə diaqnoz kimi təqdim olunmur. Burada məqsəd pasiyentlərə xəstəlik diaqnozu qoymaq deyil, glucose və A1c göstəriciləri arasında datada görünən analitik əlaqəni göstərməkdir.
+
+
+
+
+
+
+
+### 3.2. Yaş qrupları üzrə risk siqnalı
+```{r yas_qruplari_uzre_risk_siqnali, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+
+yas_risk_xulase = proqnoz_data %>%
+filter(!is.na(yas_qrupu)) %>%
+filter(!is.na(risk_siqnali_sayi)) %>%
+mutate(yas_qrupu = factor(
+yas_qrupu,levels = c("18-34", "35-49", "50-64", "65+")),
+riskli_pasiyent = case_when(
+risk_siqnali_sayi >= 1 ~ 1,
+risk_siqnali_sayi == 0 ~ 0,TRUE ~ NA_real_)) %>%
+filter(!is.na(yas_qrupu)) %>%
+group_by(yas_qrupu) %>%
+summarise(
+pasiyent_sayi = n(),
+riskli_pasiyent_sayi = sum(riskli_pasiyent == 1, na.rm = TRUE),
+risk_faizi = round(riskli_pasiyent_sayi / pasiyent_sayi * 100, 1),
+orta_risk_siqnali = round(mean(risk_siqnali_sayi, na.rm = TRUE), 2),.groups = "drop")
+yas_risk_xulase
+
+
+
+
+
+ggplot(yas_risk_xulase,
+aes(x = yas_qrupu,
+y = risk_faizi,
+fill = yas_qrupu)) +
+geom_col(width = 0.65) +
+geom_text(aes(label = paste0(risk_faizi, "% / ", pasiyent_sayi, " pasiyent")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(yas_risk_xulase$risk_faizi) * 1.20)) +
+labs(title = "Yaş qrupları üzrə risk siqnalı olan pasiyent faizi",
+x = "Yaş qrupu",
+y = "Risk faizi") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5))
+
+
+```
+
+Bu analizdə yaş qrupları üzrə risk siqnalı olan pasiyent faizi yoxlanılmışdır. Fərziyyə belədir: yaş qrupları dəyişdikcə pasiyentlərdə risk siqnalı görünmə faizi də dəyişə bilər.
+
+Nəticəyə baxdıqda 18-34 yaş qrupunda risk siqnalı olan pasiyent faizi 43.7% olmuşdur. 35-49 yaş qrupunda bu göstərici 84.1%-ə yüksəlmişdir. Ən yüksək risk faizi isə 50-64 yaş qrupunda müşahidə olunmuşdur və 98.8% təşkil etmişdir. 65+ yaş qrupunda risk faizi 76.2% olmuşdur.
+
+Qrafik göstərir ki, risk siqnalı 35 yaşdan sonra kəskin artır və 50-64 yaş qrupunda ən yüksək səviyyəyə çatır. 65+ yaş qrupunda risk faizi hələ də yüksəkdir, lakin 50-64 yaş qrupu ilə müqayisədə daha aşağı görünür.
+
+Bu nəticə diaqnoz kimi təqdim olunmur. Burada risk siqnalı BMI, sistolik qan təzyiqi və glucose göstəriciləri əsasında yaradılmış analitik göstəricidir. Buna görə nəticə yaş qrupları üzrə risk siqnallarının paylanmasını göstərən statistik müşahidə kimi qiymətləndirilməlidir.
+
+
+
+
+
+
+
+
+### 3.3. Risk siqnalı sayına görə pasiyent paylanması
+```{r risk_siqnali_sayina_gore_paylanma, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+
+risk_sayi_xulase = proqnoz_data %>%
+filter(!is.na(risk_siqnali_sayi)) %>%
+mutate(risk_qrupu = case_when(
+risk_siqnali_sayi == 0 ~ "Risk siqnalı yoxdur",
+risk_siqnali_sayi == 1 ~ "1 risk siqnalı",
+risk_siqnali_sayi == 2 ~ "2 risk siqnalı",
+risk_siqnali_sayi == 3 ~ "3 risk siqnalı",
+TRUE ~ "Digər"),
+risk_qrupu = factor(
+risk_qrupu,
+levels = c("Risk siqnalı yoxdur", "1 risk siqnalı", "2 risk siqnalı", "3 risk siqnalı"))) %>%
+count(risk_qrupu, name = "pasiyent_sayi") %>%
+mutate(faiz = round(pasiyent_sayi / sum(pasiyent_sayi) * 100, 1))
+risk_sayi_xulase
+
+
+
+ggplot(risk_sayi_xulase,
+aes(x = risk_qrupu,
+y = pasiyent_sayi,
+fill = risk_qrupu)) +
+geom_col(width = 0.65) +
+geom_text(aes(label = paste0(pasiyent_sayi, " (", faiz, "%)")),
+vjust = -0.4,
+size = 3.5) +
+scale_y_continuous(
+limits = c(0, max(risk_sayi_xulase$pasiyent_sayi) * 1.20)) +
+labs(title = "Risk siqnalı sayına görə pasiyent paylanması",
+x = "Risk siqnalı sayı",
+y = "Pasiyent sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5),
+axis.text.x = element_text(angle = 15, hjust = 1))
+
+```
+
+Bu analizdə pasiyentlər risk siqnalı sayına görə qruplaşdırılmışdır. Fərziyyə belədir: risk hesabı aparıla bilən pasiyentlərin böyük hissəsində ən azı bir risk siqnalı görünə bilər.
+
+Nəticəyə baxdıqda 5,130 pasiyentdə risk siqnalı görünməmişdir və bu, ümumi risk hesabı aparılan pasiyentlərin 15.9%-ni təşkil edir. Ən böyük qrup 1 risk siqnalı olan pasiyentlərdir. Bu qrupda 17,567 pasiyent var və ümumi pasiyentlərin 54.4%-ni təşkil edir.
+
+Bundan əlavə, 8,308 pasiyentdə 2 risk siqnalı, 1,304 pasiyentdə isə 3 risk siqnalı müşahidə edilmişdir. Bu nəticəyə əsasən risk hesabı aparılan pasiyentlərin böyük hissəsində ən azı bir risk siqnalı görünür.
+
+Bu nəticə diaqnoz kimi təqdim olunmur. Burada risk siqnalı BMI, sistolik qan təzyiqi və glucose göstəriciləri əsasında yaradılmış analitik göstəricidir. Nəticə pasiyentlərin ümumi risk siqnalı profilini göstərmək üçün istifadə olunmuşdur.
+
+
+
+
+
+
+
+### 3.4. Risk siqnalı olmayan pasiyentlərdə sərhədə yaxın göstəricilər
+
+```{r risksiz_pasiyentlerde_serhed_riski, include=TRUE, warning=FALSE, echo=TRUE, message=FALSE, error=FALSE, fig.width=8, fig.height=5}
+
+risksiz_data = proqnoz_data %>%
+filter(!is.na(risk_siqnali_sayi)) %>%
+filter(risk_siqnali_sayi == 0)
+serhed_risk_xulase = data.frame(
+serhed_gosterici = c(
+"BMI sərhədə yaxın",
+"Sistolik təzyiq sərhədə yaxın",
+"Glucose sərhədə yaxın"),
+pasiyent_sayi = c(
+sum(risksiz_data$`Body Mass Index` >= 25 & risksiz_data$`Body Mass Index` < 30, na.rm = TRUE),
+sum(risksiz_data$`Systolic Blood Pressure` >= 130 & risksiz_data$`Systolic Blood Pressure` < 140, na.rm = TRUE),
+sum(risksiz_data$Glucose >= 100 & risksiz_data$Glucose < 126, na.rm = TRUE)),
+umumi_risksiz_pasiyent = nrow(risksiz_data))
+serhed_risk_xulase = serhed_risk_xulase %>%
+mutate(faiz = round(pasiyent_sayi / umumi_risksiz_pasiyent * 100, 1)) %>%
+arrange(desc(pasiyent_sayi))
+serhed_risk_xulase
+
+
+
+
+ggplot(serhed_risk_xulase,
+aes(x = reorder(serhed_gosterici, pasiyent_sayi),
+y = pasiyent_sayi,
+fill = serhed_gosterici)) +
+geom_col(width = 0.6) +
+geom_text(aes(label = paste0(pasiyent_sayi, " pasiyent / ", faiz, "%")),
+hjust = -0.05,
+size = 3.5) +
+coord_flip() +
+scale_y_continuous(
+limits = c(0, max(serhed_risk_xulase$pasiyent_sayi) * 1.35)) +
+labs(title = "Risk siqnalı olmayan pasiyentlərdə sərhədə yaxın göstəricilər",
+x = "Sərhədə yaxın göstərici",
+y = "Pasiyent sayı") +
+theme_minimal() +
+theme(legend.position = "none",
+plot.title = element_text(size = 13, hjust = 0.5))
+
+```
+
+Bu analizdə risk siqnalı olmayan pasiyentlərdə göstəricilərin risk həddinə yaxın olub-olmaması yoxlanılmışdır. Fərziyyə belədir: risk siqnalı görünməyən pasiyentlərin bir hissəsində göstəricilər risk sərhədinə yaxın ola bilər.
+
+Nəticəyə baxdıqda risk siqnalı olmayan 5,130 pasiyent içində 3,466 pasiyentin BMI göstəricisi sərhədə yaxın olmuşdur. Bu, risksiz qrupun 67.6%-ni təşkil edir. Sistolik təzyiq üzrə sərhədə yaxın olan pasiyent sayı 300 olmuşdur və bu 5.8%-ə bərabərdir. Glucose üzrə isə 251 pasiyent sərhədə yaxın qrupda yer almışdır və bu 4.9% təşkil etmişdir.
+
+Qrafik göstərir ki, risk siqnalı olmayan pasiyentlər arasında ən çox sərhədə yaxın göstərici BMI üzrə müşahidə olunur. Bu nəticə həmin pasiyentlərin mütləq riskli olacağını göstərmir, lakin BMI baxımından izlənməli sərhəd qrupun mövcud olduğunu göstərir.
+
+Bu nəticə diaqnoz kimi təqdim olunmur. Burada məqsəd risk siqnalı görünməyən pasiyentlərin içində risk həddinə yaxın göstəriciləri müəyyən etmək və onları analitik baxımdan ayrıca göstərməkdir.
+
+
+
+
+
+
+
+## 4. Xülasə
+Bu layihədə pasiyent, müraciət və klinik müşahidə məlumatları əsasında ümumi data analizi aparılmışdır. Layihədə üç əsas data istifadə edilmişdir: pasientler, muracietler və musahideler. Əsas analiz datası kimi musahideler cədvəli götürülmüş, müraciət və pasiyent məlumatları bu cədvələ əlavə edilmişdir. Birləşdirmədən sonra müşahidə sətrlərinin itmədiyi yoxlanılmış və analiz üçün ümumi data hazırlanmışdır.
+
+Deskriptiv təhlil bölməsində pasiyentlərin cins, yaş qrupu, BMI qrupu, müraciət növü və əsas klinik göstəricilər üzrə paylanması araşdırılmışdır. Cins üzrə pasiyent sayı demək olar ki, balanslı olmuşdur. Yaş qrupları üzrə isə ən böyük pasiyent qrupu 65+ yaş qrupu olmuşdur. Əsas klinik göstəricilər içində sistolik və diastolik qan təzyiqi, BMI, glucose və A1c göstəriciləri xüsusi olaraq təhlil edilmişdir. Nəticələr göstərmişdir ki, BMI və sistolik qan təzyiqi yaş qrupları üzrə dəyişir və xüsusilə 50-64 yaş qrupunda daha yüksək orta dəyərlər müşahidə olunur.
+
+Müraciət məlumatlarına baxdıqda ən çox qeydə alınan müraciət növünün Outpatient Encounter olduğu görünmüşdür. Klinik ölçmələrin böyük hissəsi də əsasən bu müraciət növü daxilində qeydə alınmışdır. Bu nəticə həmin pasiyentlərin daha riskli olduğunu göstərmir; sadəcə seçilmiş klinik ölçmələrin daha çox ambulator müraciətlər zamanı toplandığını göstərir. Müraciət səbəbləri üzrə analiz isə yalnız səbəb məlumatı mövcud olan qeydlər əsasında aparılmışdır və nəticələr “ən çox xəstəliklər” kimi deyil, mövcud müraciət səbəblərinin paylanması kimi qiymətləndirilmişdir.
+
+Anomaliyalar bölməsində data keyfiyyəti baxımından bir neçə mühüm problem aşkar edilmişdir. Müşahidə və müraciət tarixləri arasında 1 ildən çox fərq olan 54,519 qeyd tapılmışdır. Bundan əlavə, ölüm kağızı və ölüm tarixi arasında uyğunsuzluqlar, vəfat tarixindən sonra klinik və real müraciət qeydləri, A1c göstəricisində mənfi dəyərlər və müraciət səbəbi məlumatında yüksək boşluq faizi müəyyən edilmişdir. Xüsusilə müraciət səbəbi məlumatının 71.8%-də boş olması səbəb əsaslı analizlərin məhdud interpretasiya olunmasına səbəb olur.
+
+Proqnoz və fərziyyələr bölməsində pasiyent səviyyəsində sadə analitik risk siqnalları yoxlanılmışdır. Glucose qrupları üzrə yüksək A1c faizi analizində glucose səviyyəsi artdıqca yüksək A1c faizinin də kəskin yüksəldiyi görünmüşdür. Normal glucose qrupunda yüksək A1c faizi 1.6% olduğu halda, yüksək glucose qrupunda bu göstərici 59.2%-ə, çox yüksək glucose qrupunda isə 82.3%-ə yüksəlmişdir.
+
+Yaş qrupları üzrə risk siqnalı analizində risk siqnalı faizi 35 yaşdan sonra artmış və 50-64 yaş qrupunda ən yüksək səviyyəyə çatmışdır. Risk siqnalı sayına görə pasiyent paylanması göstərmişdir ki, risk hesabı aparılan pasiyentlərin böyük hissəsində ən azı bir risk siqnalı mövcuddur. Risk siqnalı olmayan pasiyentlərdə isə xüsusilə BMI göstəricisi üzrə sərhədə yaxın qrupun böyük olduğu müşahidə edilmişdir. Bu nəticəyə görə risk siqnalı olmayan 5,130 pasiyentin 3,466-sında BMI göstəricisi sərhədə yaxın olmuşdur.
+
+Ümumi nəticə olaraq, bu layihədə data həm deskriptiv, həm data keyfiyyəti, həm də sadə analitik risk siqnalları baxımından təhlil edilmişdir. Analiz nəticələri klinik diaqnoz kimi təqdim olunmur. Nəticələr yalnız Synthea Hospital datasında görünən statistik və analitik müşahidələr kimi qiymətləndirilməlidir. Layihənin əsas məhdudiyyəti bəzi dəyişənlərdə boş və uyğunsuz məlumatların olmasıdır. Buna baxmayaraq, aparılan analizlər pasiyentlərin ümumi profili, əsas klinik göstəricilər, data keyfiyyəti problemləri və risk siqnalları haqqında aydın ümumi baxış təqdim edir.
+
